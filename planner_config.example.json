@@ -1,0 +1,71 @@
+{
+    "default_availability": [
+        {
+            "start": "09:00",
+            "end": "23:59",
+            "weight": 1.0
+        }
+    ],
+    "weekly_availability": {
+        "lundi": [
+            {
+                "start": "19:00",
+                "end": "23:00",
+                "weight": 0.9
+            }
+        ],
+        "mardi": [
+            {
+                "start": "19:00",
+                "end": "23:00",
+                "weight": 0.9
+            }
+        ],
+        "mercredi": [
+            {
+                "start": "19:00",
+                "end": "23:00",
+                "weight": 0.9
+            }
+        ],
+        "jeudi": [
+            {
+                "start": "19:00",
+                "end": "23:00",
+                "weight": 1.0
+            }
+        ],
+        "vendredi": [
+            {
+                "start": "19:00",
+                "end": "23:59",
+                "weight": 1.2
+            }
+        ],
+        "samedi": [
+            {
+                "start": "13:00",
+                "end": "23:59",
+                "weight": 1.2
+            }
+        ],
+        "dimanche": [
+            {
+                "start": "13:00",
+                "end": "20:30",
+                "weight": 1.1
+            }
+        ]
+    },
+    "weekday_weights": {
+        "lundi": 0.9,
+        "mardi": 0.9,
+        "mercredi": 0.9,
+        "jeudi": 1.0,
+        "vendredi": 1.2,
+        "samedi": 1.2,
+        "dimanche": 1.1
+    },
+    "default_day_weight": 1.0,
+    "buffer_minutes": 30
+}

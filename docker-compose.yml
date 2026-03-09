@@ -1,0 +1,23 @@
+services:
+  ugc-scraper:
+    build: .
+    container_name: ugc-scraper
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      # Fichiers de credentials Google Calendar (OAuth)
+      - ./google_credentials.json:/app/google_credentials.json:ro
+      - ./.google_calendar_token.json:/app/.google_calendar_token.json
+      # Session Playwright persistée (login UGC)
+      - ./.ugc_session.json:/app/.ugc_session.json
+      # Configuration du planner (déjà COPYée, mais montée pour édition live)
+      - ./planner_config.json:/app/planner_config.json:ro
+      # Sortie ICS
+      - ./output:/app/output
+    environment:
+      - GOOGLE_CALENDAR_PLANNING_ICS=/app/output/planned_screenings.ics
+      - UGC_OUTPUT_JSON=/app/output/ugc_output.json
+      - UGC_SESSION_FILE=/app/.ugc_session.json
