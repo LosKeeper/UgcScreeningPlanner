@@ -27,6 +27,6 @@ COPY src/ src/
 COPY planner_config.json .
 
 # Crontab : tous les mardis à 11h00
-RUN echo '0 11 * * 2 python /app/src/main.py' > /app/crontab
+RUN echo '0 11 * * 2 /usr/local/bin/python /app/src/main.py' > /app/crontab
 
 CMD ["supercronic", "/app/crontab"]
