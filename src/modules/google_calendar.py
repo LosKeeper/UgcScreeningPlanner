@@ -238,17 +238,11 @@ class GoogleCalendarClient:
         )
 
         logger.info(
-            "Récupération des événements Google Calendar pour la plage UGC: {} -> {}",
-            dates[0],
-            dates[-1],
-        )
-        logger.info(
             "Récupération des événements Google Calendar occupés pour la plage UGC: {} -> {}",
             dates[0],
             dates[-1],
         )
-        return self._filter_events(
-            events,
+        return self.list_events(
             time_min=start_of_range,
             time_max=end_of_range,
             max_results=max_results,
