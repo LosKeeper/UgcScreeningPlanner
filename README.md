@@ -154,12 +154,15 @@ GOOGLE_CALENDAR_ID=
 
 Le client se base sur l'URL partageable Google Calendar et télécharge le flux iCal public correspondant. Aucune authentification Google n'est nécessaire.
 
+**Remarque** : Seuls les événements marqués comme **occupé** (TRANSP:OPAQUE) sont récupérés. Les événements marqués comme "libre" (TRANSP:TRANSPARENT) ou autre sont automatiquement ignorés. Cela permet de filtrer que les créneaux effectivement réservés.
+
 Le script peut aussi exporter les séances retenues dans [planned_screenings.ics](planned_screenings.ics), puis l'envoyer automatiquement par email en pièce jointe si une configuration SMTP est présente.
 
 Méthodes principales :
-- `list_upcoming_events()`
-- `list_events()`
-- `list_events_for_day()`
+- `list_upcoming_events()` — prochains événements occupé
+- `list_events()` — événements occupé dans une plage de dates
+- `list_events_for_day()` — événements occupé d'une journée donnée
+- `list_events_for_ugc_date_range()` — événements occupé sur la plage UGC (aujourd'hui au mardi suivant)
 
 ### Envoi du fichier ICS par email
 

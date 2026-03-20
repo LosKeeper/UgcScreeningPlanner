@@ -18,20 +18,25 @@ from icalendar import Calendar, Event
 
 @dataclass
 class CalendarEvent:
-    """Représente un événement Google Calendar."""
+    """Représente un événement Google Calendar filtré (seuls les événements marqués comme occupé sont inclus)."""
     id: str
     summary: str
     start_datetime: Optional[datetime]
     end_datetime: Optional[datetime]
     all_day: bool
     status: str
+    transp: str
     html_link: Optional[str]
     location: Optional[str]
     description: Optional[str]
 
 
 class GoogleCalendarClient:
-    """Client simple pour récupérer les événements d'un agenda Google Calendar partagé publiquement."""
+    """Client pour récupérer les événements d'un agenda Google Calendar partagé publiquement.
+
+    Filtre automatiquement pour retourner uniquement les événements marqués comme occupé (TRANSP:OPAQUE).
+    Les événements marqués comme libre (TRANSP:TRANSPARENT) ou autre ne sont pas inclus.
+    """
 
     def __init__(
         self,
@@ -138,6 +143,7 @@ class GoogleCalendarClient:
             end_datetime=end_datetime,
             all_day=all_day,
             status=str(component.get("STATUS", "confirmed")).lower(),
+            transp=str(component.get("TRANSP", "opaque")).lower(),
             html_link=str(component.get("URL")) if component.get(
                 "URL") else None,
             location=str(component.get("LOCATION")) if component.get(
@@ -153,11 +159,15 @@ class GoogleCalendarClient:
         time_max: Optional[datetime],
         max_results: int,
     ) -> List[CalendarEvent]:
-        """Filtre les événements par intervalle et limite de résultats."""
+        """Filtre les événements par intervalle, statut occupé et limite de résultats."""
         filtered = []
 
         for event in sorted(events, key=lambda item: item.start_datetime or datetime.max.replace(tzinfo=timezone.utc)):
             if event.start_datetime is None:
+                continue
+
+            # Filtre uniquement les événements marqués comme occupé (TRANSP:OPAQUE)
+            if event.transp != "opaque":
                 continue
 
             if time_min and event.end_datetime and event.end_datetime < time_min:
@@ -179,7 +189,7 @@ class GoogleCalendarClient:
         time_max: Optional[datetime] = None,
         max_results: int = 100,
     ) -> List[CalendarEvent]:
-        """Retourne les événements du calendrier dans un intervalle donné."""
+        """Retourne les événements marqués comme occupé dans un intervalle donné."""
         calendar = self._download_calendar()
         events = [
             self._normalize_event(component)
@@ -189,7 +199,7 @@ class GoogleCalendarClient:
         return self._filter_events(events, time_min, time_max, max_results)
 
     def list_upcoming_events(self, max_results: int = 10) -> List[CalendarEvent]:
-        """Retourne les prochains événements à partir de maintenant."""
+        """Retourne les prochains événements marqués comme occupé à partir de maintenant."""
         now = datetime.now(timezone.utc)
         return self.list_events(time_min=now, max_results=max_results)
 
@@ -216,7 +226,7 @@ class GoogleCalendarClient:
         return dates
 
     def list_events_for_ugc_date_range(self, max_results: int = 500) -> List[CalendarEvent]:
-        """Retourne tous les événements sur la même plage de dates que les séances UGC."""
+        """Retourne tous les événements marqués comme occupé sur la même plage de dates que les séances UGC."""
         dates = self.get_dates_until_next_tuesday()
         local_tz = datetime.now().astimezone().tzinfo or timezone.utc
 
@@ -232,14 +242,20 @@ class GoogleCalendarClient:
             dates[0],
             dates[-1],
         )
-        return self.list_events(
+        logger.info(
+            "Récupération des événements Google Calendar occupés pour la plage UGC: {} -> {}",
+            dates[0],
+            dates[-1],
+        )
+        return self._filter_events(
+            events,
             time_min=start_of_range,
             time_max=end_of_range,
             max_results=max_results,
         )
 
     def list_events_for_day(self, target_day: date) -> List[CalendarEvent]:
-        """Retourne les événements d'une journée donnée."""
+        """Retourne les événements marqués comme occupé d'une journée donnée."""
         start_of_day = datetime.combine(
             target_day, time.min, tzinfo=timezone.utc)
         end_of_day = start_of_day + timedelta(days=1)
