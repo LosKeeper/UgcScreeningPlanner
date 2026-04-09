@@ -61,7 +61,8 @@ class UGCScrapper:
         """
         self.email = email
         self.password = password
-        self.max_login_attempts = int(os.getenv("UGC_MAX_LOGIN_ATTEMPTS", "20"))
+        self.max_login_attempts = int(
+            os.getenv("UGC_MAX_LOGIN_ATTEMPTS", "20"))
         self.extra_cookies = self._parse_extra_cookies(
             os.getenv("UGC_EXTRA_COOKIES", "")
         )
@@ -110,9 +111,11 @@ class UGCScrapper:
                 }
                 for cookie in self.extra_cookies
             ])
-            logger.info("{} cookie(s) personnalisé(s) injecté(s)", len(self.extra_cookies))
+            logger.info("{} cookie(s) personnalisé(s) injecté(s)",
+                        len(self.extra_cookies))
         except Exception as e:
-            logger.warning("Impossible d'injecter les cookies personnalisés: {}", e)
+            logger.warning(
+                "Impossible d'injecter les cookies personnalisés: {}", e)
 
     def _create_context(self, browser: Browser, use_persisted_session: bool = False) -> BrowserContext:
         """Crée un contexte Playwright, avec session persistée si demandée."""
@@ -130,14 +133,16 @@ class UGCScrapper:
         try:
             self.session_file.parent.mkdir(parents=True, exist_ok=True)
             page.context.storage_state(path=str(self.session_file))
-            logger.success("Session persistée sauvegardée ({})", self.session_file.name)
+            logger.success("Session persistée sauvegardée ({})",
+                           self.session_file.name)
         except Exception as e:
             logger.warning("Impossible de sauvegarder la session: {}", e)
 
     def _enable_remember_me(self, page: Page) -> None:
         """Active l'option 'Se souvenir de moi' si elle est disponible."""
         try:
-            page.wait_for_selector('#remember-me', state='attached', timeout=5000)
+            page.wait_for_selector(
+                '#remember-me', state='attached', timeout=5000)
 
             remember_me = page.locator('#remember-me')
             if remember_me.is_checked():
@@ -161,7 +166,8 @@ class UGCScrapper:
             if remember_me.is_checked():
                 logger.debug("Option 'Se souvenir de moi' cochée")
             else:
-                logger.warning("Impossible de confirmer la case 'Se souvenir de moi'")
+                logger.warning(
+                    "Impossible de confirmer la case 'Se souvenir de moi'")
         except Exception as e:
             logger.warning("Impossible d'activer 'Se souvenir de moi': {}", e)
 
@@ -175,7 +181,8 @@ class UGCScrapper:
         page = context.new_page()
 
         try:
-            page.goto("https://www.ugc.fr/profil.html", wait_until="domcontentloaded")
+            page.goto("https://www.ugc.fr/profil.html",
+                      wait_until="domcontentloaded")
             self._accept_cookies(page)
 
             try:
@@ -184,7 +191,8 @@ class UGCScrapper:
                 pass
 
             if self._is_still_on_login_page(page) or "connexion" in page.url.lower():
-                logger.warning("Session persistée expirée, nouvelle connexion nécessaire")
+                logger.warning(
+                    "Session persistée expirée, nouvelle connexion nécessaire")
                 page.close()
                 context.close()
                 return None
@@ -467,7 +475,8 @@ class UGCScrapper:
             if 'intercepts pointer events' not in str(e):
                 raise
 
-            logger.warning("Le bandeau cookies bloque le clic, tentative renforcée")
+            logger.warning(
+                "Le bandeau cookies bloque le clic, tentative renforcée")
             self._accept_cookies(page)
             button.click(timeout=5000, force=True)
 
@@ -504,17 +513,21 @@ class UGCScrapper:
             )
 
         if state.get('feedback') and 'déjà été envoyée' in state['feedback'].lower():
-            logger.warning("Une requête semble déjà partie, pas de nouvelle soumission automatique")
+            logger.warning(
+                "Une requête semble déjà partie, pas de nouvelle soumission automatique")
             return self._get_active_page(page)
 
         if self._is_truthy_flag(state.get('buttonDisabled')):
-            logger.warning("Le formulaire est déjà en cours de traitement, pas de nouvelle soumission")
+            logger.warning(
+                "Le formulaire est déjà en cours de traitement, pas de nouvelle soumission")
             return self._get_active_page(page)
 
         if state.get('captchaState') in ('solving', 'ready', 'verifying'):
-            logger.warning("Captcha encore actif après attente, tentative unique de secours via clic DOM")
+            logger.warning(
+                "Captcha encore actif après attente, tentative unique de secours via clic DOM")
         else:
-            logger.warning("Le clic n'a pas semblé partir, tentative de secours via clic DOM")
+            logger.warning(
+                "Le clic n'a pas semblé partir, tentative de secours via clic DOM")
 
         page.locator('#connectLink').evaluate("button => button.click()")
         self._wait_for_login_result(page, timeout_ms=15000)
@@ -536,15 +549,18 @@ class UGCScrapper:
             page = context.new_page()
 
             try:
-                logger.info("Tentative {}/{}", attempt, self.max_login_attempts)
+                logger.info("Tentative {}/{}", attempt,
+                            self.max_login_attempts)
 
-                page.goto("https://www.ugc.fr/login.html", wait_until="domcontentloaded")
+                page.goto("https://www.ugc.fr/login.html",
+                          wait_until="domcontentloaded")
 
                 # Accepter les cookies
                 self._accept_cookies(page)
 
                 page.wait_for_selector('#mail', state='visible', timeout=10000)
-                page.wait_for_selector('#password', state='visible', timeout=10000)
+                page.wait_for_selector(
+                    '#password', state='visible', timeout=10000)
 
                 # Utiliser les identifiants explicites du formulaire UGC
                 page.locator('#mail').fill(self.email)
@@ -567,7 +583,8 @@ class UGCScrapper:
                     })
                 """)
                 logger.debug("Email rempli: {}", values['email'])
-                logger.debug("Mot de passe rempli: {} caractères", len(values['password']))
+                logger.debug("Mot de passe rempli: {} caractères",
+                             len(values['password']))
                 logger.debug("Bouton désactivé: {}", values['buttonDisabled'])
 
                 logger.debug("Attente des validations asynchrones")
@@ -587,7 +604,8 @@ class UGCScrapper:
 
                 page = self._submit_login_form(page)
                 page = self._get_or_create_page(page)
-                page.goto("https://www.ugc.fr/profil.html", wait_until="domcontentloaded")
+                page.goto("https://www.ugc.fr/profil.html",
+                          wait_until="domcontentloaded")
 
                 try:
                     page.wait_for_load_state("networkidle", timeout=10000)
@@ -599,7 +617,8 @@ class UGCScrapper:
                 logger.debug("URL après connexion: {}", page.url)
 
                 if self._is_still_on_login_page(page) or "connexion" in page.url.lower():
-                    logger.warning("La connexion automatique a échoué - toujours sur la page de login")
+                    logger.warning(
+                        "La connexion automatique a échoué - toujours sur la page de login")
                     last_error = Exception("Toujours sur la page de login")
                 else:
                     logger.success("Connexion réussie")
@@ -608,7 +627,8 @@ class UGCScrapper:
 
             except Exception as e:
                 last_error = e
-                logger.warning("Erreur lors de la connexion automatique: {}", e)
+                logger.warning(
+                    "Erreur lors de la connexion automatique: {}", e)
 
             try:
                 page.close()
@@ -693,7 +713,8 @@ class UGCScrapper:
     def _parse_french_release_date(self, raw_date: str) -> Optional[date]:
         """Convertit une date française UGC en objet `date`."""
         normalized = re.sub(r"\s+", " ", raw_date.strip().lower())
-        match = re.match(r"^(\d{1,2})\s+([a-zéûîôàèùç]+)\s+(\d{4})$", normalized)
+        match = re.match(
+            r"^(\d{1,2})\s+([a-zéûîôàèùç]+)\s+(\d{4})$", normalized)
         if not match:
             return None
 
@@ -727,6 +748,11 @@ class UGCScrapper:
 
         return datetime.strptime(normalized, "%H:%M").time()
 
+    def _extract_hhmm(self, raw_value: str) -> Optional[str]:
+        """Extrait un horaire HH:MM depuis un texte libre."""
+        match = re.search(r"(\d{1,2}:\d{2})", raw_value)
+        return match.group(1) if match else None
+
     def _extract_release_date(self, html_content: str) -> Optional[date]:
         """Extrait la date de sortie depuis la page d'un film UGC."""
         soup = BeautifulSoup(html_content, "html.parser")
@@ -737,14 +763,16 @@ class UGCScrapper:
 
         for candidate in info_candidates:
             text = candidate.get_text(" ", strip=True)
-            match = re.search(r"Sortie le\s+([0-9]{1,2}\s+[^0-9]+\s+[0-9]{4})", text, re.IGNORECASE)
+            match = re.search(
+                r"Sortie le\s+([0-9]{1,2}\s+[^0-9]+\s+[0-9]{4})", text, re.IGNORECASE)
             if match:
                 return self._parse_french_release_date(match.group(1).strip())
 
         main_text = soup.select_one("main")
         if main_text:
             text = main_text.get_text(" ", strip=True)
-            match = re.search(r"Sortie le\s+([0-9]{1,2}\s+[^0-9]+\s+[0-9]{4})", text, re.IGNORECASE)
+            match = re.search(
+                r"Sortie le\s+([0-9]{1,2}\s+[^0-9]+\s+[0-9]{4})", text, re.IGNORECASE)
             if match:
                 return self._parse_french_release_date(match.group(1).strip())
 
@@ -758,7 +786,8 @@ class UGCScrapper:
             film_page.goto(film_url, wait_until="networkidle")
             self._accept_cookies(film_page)
             release_date = self._extract_release_date(film_page.content())
-            logger.debug("Date de sortie extraite pour {}: {}", film_url, release_date)
+            logger.debug("Date de sortie extraite pour {}: {}",
+                         film_url, release_date)
             return release_date
         finally:
             film_page.close()
@@ -770,8 +799,10 @@ class UGCScrapper:
             if screening.salle and screening.salle.strip().lower() != "inconnue"
         ]
 
-        has_vo = any(screening.version.upper().startswith("VO") for screening in screenings_with_room)
-        has_vf = any(screening.version.upper() == "VF" for screening in screenings_with_room)
+        has_vo = any(screening.version.upper().startswith("VO")
+                     for screening in screenings_with_room)
+        has_vf = any(screening.version.upper() ==
+                     "VF" for screening in screenings_with_room)
 
         if has_vo and has_vf:
             return [
@@ -819,8 +850,10 @@ class UGCScrapper:
                     title = self._extract_watchlist_title(link)
                     href = link.get("href")
                     if title:  # Ne garder que les titres non vides
-                        film_url = urljoin("https://www.ugc.fr/", href) if href else None
-                        release_date = self._fetch_watchlist_release_date(page, film_url) if film_url else None
+                        film_url = urljoin(
+                            "https://www.ugc.fr/", href) if href else None
+                        release_date = self._fetch_watchlist_release_date(
+                            page, film_url) if film_url else None
                         watchlist.append(
                             WatchlistFilm(
                                 title=title,
@@ -828,11 +861,13 @@ class UGCScrapper:
                             )
                         )
 
-                logger.success("Watchlist récupérée avec succès ({} films)", len(watchlist))
+                logger.success(
+                    "Watchlist récupérée avec succès ({} films)", len(watchlist))
                 return watchlist
 
             except Exception as e:
-                logger.error("Erreur lors de la récupération de la watchlist: {}", e)
+                logger.error(
+                    "Erreur lors de la récupération de la watchlist: {}", e)
                 raise
             finally:
                 page.close()
@@ -841,12 +876,21 @@ class UGCScrapper:
     def scrape_url(self, url: str) -> Dict[str, List[Seance]]:
         """Scrape l'URL donnée et retourne un mapping titre -> séances."""
         dates_to_scrape = self.get_dates_until_next_tuesday()
-        logger.info("Récupération des séances pour les dates: {}", ', '.join(dates_to_scrape))
+        logger.info("Récupération des séances pour les dates: {}",
+                    ', '.join(dates_to_scrape))
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(url, wait_until="networkidle")
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+            # Certaines pages UGC gardent des requêtes en arrière-plan actives.
+            # On tente un networkidle court sans bloquer le scraping si ça n'aboutit pas.
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                logger.debug(
+                    "networkidle non atteint sur la page cinéma, on continue")
 
             # Accepter les cookies si le popup apparaît
             self._accept_cookies(page)
@@ -857,22 +901,38 @@ class UGCScrapper:
                 logger.debug("Récupération de la date {}", date_str)
 
                 # Cliquer sur le sélecteur de date
-                page.evaluate(f"""
+                date_clicked = page.evaluate(f"""
                 () => {{
                 const el = document.querySelector('#nav_date_{date_str}');
-                if (!el) return;
+                if (!el) return false;
 
                 el.dispatchEvent(new PointerEvent('pointerdown', {{ bubbles: true }}));
                 el.dispatchEvent(new PointerEvent('pointerup', {{ bubbles: true }}));
                 el.dispatchEvent(new MouseEvent('click', {{ bubbles: true }}));
+                return true;
                 }}
                 """)
 
-                page.wait_for_timeout(1500)
-                page.wait_for_load_state("networkidle")
+                if not date_clicked:
+                    logger.warning(
+                        "Sélecteur de date introuvable pour {}", date_str)
+                    continue
 
-                page.wait_for_selector(
-                    "div[id^='bloc-showing-film-']", timeout=10000)
+                page.wait_for_timeout(1500)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    logger.debug(
+                        "networkidle non atteint après clic date {}", date_str)
+
+                try:
+                    page.wait_for_selector(
+                        "div[id^='bloc-showing-film-']", timeout=10000)
+                except Exception:
+                    logger.warning(
+                        "Aucun bloc film détecté pour la date {} (timeout)", date_str
+                    )
+                    continue
 
                 html_content = page.content()
 
@@ -897,25 +957,59 @@ class UGCScrapper:
                         for li in screening_list.find_all("li"):
                             button = li.find("button")
                             if button:
-                                screening_date = button.get("data-seancedate", "")
-                                version = button.get("data-version", "VF")
+                                screening_date = button.get(
+                                    "data-seancedate", "")
+                                version = button.get("data-version", "")
                                 hourstart_elem = button.find(
-                                    "div", class_="screening-start")
+                                    "div", class_="screening-start") or button.find(
+                                        "div", class_="screening-time-start")
                                 hourend_elem = button.find(
-                                    "div", class_="screening-end")
+                                    "div", class_="screening-end") or button.find(
+                                        "div", class_="screening-time-end")
                                 salle_elem = button.find(
-                                    "div", class_="color--white text-capitalize screening-detail")
+                                    "div", class_="color--white text-capitalize screening-detail") or button.find(
+                                        "div", class_="color--white text-capitalize screening-room")
+
+                                if not version:
+                                    version_elem = button.find(
+                                        "span", class_="screening-lang")
+                                    version = version_elem.get_text(
+                                        strip=True) if version_elem else "VF"
+
                                 if hourstart_elem:
-                                    hourstart = hourstart_elem.get_text(strip=True)
-                                    hourend = hourend_elem.get_text(
-                                        strip=True).replace(")", "").split(" ", 1)[1] if hourend_elem else "Fin inconnue"
-                                    salle = salle_elem.get_text(
-                                        strip=True).split(" ", 1)[1] if salle_elem else "inconnue"
+                                    hourstart_raw = hourstart_elem.get_text(
+                                        strip=True)
+                                    hourstart = self._extract_hhmm(
+                                        hourstart_raw) or hourstart_raw
+
+                                    hourend = "Fin inconnue"
+                                    if hourend_elem:
+                                        hourend_raw = hourend_elem.get_text(
+                                            strip=True)
+                                        hourend = self._extract_hhmm(
+                                            hourend_raw) or "Fin inconnue"
+
+                                    salle = "inconnue"
+                                    if salle_elem:
+                                        salle_text = salle_elem.get_text(
+                                            strip=True)
+                                        salle = salle_text.split(
+                                            " ", 1)[1] if " " in salle_text else salle_text
+
+                                    heure_debut = self._parse_screening_time(
+                                        hourstart)
+                                    if heure_debut is None:
+                                        logger.debug(
+                                            "Horaire de début illisible ignoré: {}", hourstart
+                                        )
+                                        continue
 
                                     seance = Seance(
-                                        date=self._parse_screening_date(screening_date),
-                                        heure_debut=self._parse_screening_time(hourstart),
-                                        heure_fin=self._parse_screening_time(hourend),
+                                        date=self._parse_screening_date(
+                                            screening_date),
+                                        heure_debut=heure_debut,
+                                        heure_fin=self._parse_screening_time(
+                                            hourend),
                                         version=version,
                                         salle=salle
                                     )
