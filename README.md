@@ -197,6 +197,38 @@ Avec fichier de résultat JSON :
 python3 src/main.py --test-email --output-json email_test.json
 ```
 
+Générer un mot de passe d'application Gmail (pas à pas)
+----------------------------------------------------
+
+1. Ouvrez votre compte Google : https://myaccount.google.com/
+2. Allez dans **Sécurité** → **Validation en deux étapes** et activez-la si nécessaire.
+3. Toujours dans **Sécurité**, trouvez **Mots de passe des applications** (App passwords).
+4. Sélectionnez **Application** = Mail et **Appareil** = Autre (nommez-le `ugc-webscrap`), puis cliquez sur **Générer**.
+5. Google affichera une chaîne de 16 caractères : copiez‑la et collez‑la dans votre `.env` en tant que `EMAIL_SMTP_PASSWORD`.
+
+Remarques de sécurité
+- Ne commitez jamais `google_credentials.json`, `.gmail_token.json` ou votre `.env` contenant des secrets.
+- Révoquez le mot de passe d'application depuis votre compte Google si vous pensez qu'il a été compromis.
+- Pour un usage serveur, privilégiez un gestionnaire de secrets (Vault, GitHub Actions secrets, etc.).
+
+Exemple minimal `.env` (Gmail App Password) :
+
+```env
+EMAIL_SMTP_HOST=smtp.gmail.com
+EMAIL_SMTP_PORT=465
+EMAIL_USE_SSL=true
+EMAIL_SMTP_USERNAME=votre.adresse@gmail.com
+EMAIL_SMTP_PASSWORD=VOTRE_MOT_DE_PASSE_APPLICATION
+EMAIL_FROM=votre.adresse@gmail.com
+EMAIL_TO=votre.adresse@gmail.com
+```
+
+Après configuration, testez l'envoi :
+
+```bash
+python3 src/main.py --test-email
+```
+
 ### Planification des séances
 Une classe dédiée est disponible dans [src/modules/planner.py](src/modules/planner.py) : `ScreeningPlanner`.
 
