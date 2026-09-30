@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UGC Screening Planner</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-2: #f0f1f4;
+    --border: #dcdfe5;
+    --text: #1b1f27;
+    --muted: #667085;
+    --accent: #1f4fd8;
+    --accent-text: #ffffff;
+    --ok: #12804a;
+    --err: #c0362c;
+    --warn: #a86400;
+    --console-bg: #12151c;
+    --console-text: #d6dae3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a;
+      --surface: #1b1e27;
+      --surface-2: #242835;
+      --border: #333847;
+      --text: #e7e9ee;
+      --muted: #969db0;
+      --accent: #7c9cff;
+      --accent-text: #0e1220;
+      --ok: #4cc38a;
+      --err: #ff7b72;
+      --warn: #e2a93b;
+      --console-bg: #0c0e13;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 96px; }
+  h1 { font-size: 22px; margin: 0 0 20px; }
+  h2 { font-size: 17px; margin: 0; }
+  h3 { font-size: 14px; margin: 24px 0 4px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  p.hint { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .head .spacer { flex: 1; }
+  .muted { color: var(--muted); font-size: 13px; }
+
+  button, .button {
+    font: inherit;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 14px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  button:hover:not(:disabled), .button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.icon { padding: 4px 9px; color: var(--muted); }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  input[type=time], input[type=number], input[type=date] {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+  }
+  input[type=number] { width: 76px; }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  a { color: var(--accent); }
+
+  .badge { border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 600; background: var(--surface-2); color: var(--muted); }
+  .badge.running { color: var(--warn); }
+  .badge.success { color: var(--ok); }
+  .badge.failed { color: var(--err); }
+
+  pre.console {
+    margin: 0;
+    background: var(--console-bg);
+    color: var(--console-text);
+    border-radius: 8px;
+    padding: 12px;
+    height: 300px;
+    overflow: auto;
+    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  pre.console .ERROR, pre.console .CRITICAL { color: #ff7b72; }
+  pre.console .WARNING { color: #e2a93b; }
+  pre.console .SUCCESS { color: #4cc38a; }
+  pre.console .DEBUG { color: #8b93a7; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  td.title { white-space: normal; font-weight: 600; min-width: 160px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  ul.plain { margin: 4px 0 0; padding-left: 20px; }
+
+  .day {
+    display: grid;
+    grid-template-columns: 110px 130px 1fr;
+    gap: 8px 16px;
+    align-items: start;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .day:last-child { border-bottom: 0; }
+  .day.exception { grid-template-columns: 170px 130px 1fr; }
+  .day-name { font-weight: 600; padding-top: 5px; text-transform: capitalize; }
+  .windows { display: flex; flex-direction: column; gap: 6px; }
+  .window, .field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .field label, .window label { color: var(--muted); font-size: 13px; }
+  .unavailable { color: var(--muted); font-size: 13px; font-style: italic; padding-top: 5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips label {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 12px;
+    cursor: pointer;
+    text-transform: capitalize;
+    font-size: 13px;
+  }
+  .chips input { position: absolute; opacity: 0; pointer-events: none; }
+  .chips label:has(input:checked) { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .chips label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+
+  .savebar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    justify-content: center;
+  }
+  .savebar > div { width: 100%; max-width: 948px; display: flex; align-items: center; gap: 12px; }
+  .savebar .message { flex: 1; font-size: 13px; }
+  .message.ok { color: var(--ok); }
+  .message.err { color: var(--err); }
+
+  @media (max-width: 640px) {
+    .day, .day.exception { grid-template-columns: 1fr 1fr; }
+    .day .windows-cell { grid-column: 1 / -1; }
+    section { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>UGC Screening Planner</h1>
+
+  <section>
+    <div class="head">
+      <h2>Pipeline</h2>
+      <span id="run-status" class="badge">…</span>
+      <span class="spacer"></span>
+      <button id="run-button" class="primary">Relancer le pipeline</button>
+    </div>
+    <p class="hint" id="run-info"></p>
+    <pre class="console" id="console" aria-live="polite"></pre>
+  </section>
+
+  <section>
+    <div class="head">
+      <h2>Dernier résultat</h2>
+      <span class="muted" id="result-date"></span>
+      <span class="spacer"></span>
+      <a class="button" id="ics-link" href="api/result/ics" hidden>Télécharger l'ICS</a>
+    </div>
+    <div id="result"></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Planning</h2></div>
+
+    <h3>Lancement automatique</h3>
+    <p class="hint">Jours et heure auxquels le pipeline se lance tout seul.</p>
+    <div id="schedule"></div>
+
+    <h3>Disponibilités de la semaine</h3>
+    <p class="hint">Une séance n'est retenue que si elle tient entièrement dans un créneau. Le score d'une séance vaut poids du jour × poids du créneau × ancienneté du film.</p>
+    <div id="week"></div>
+
+    <h3>Exceptions par date</h3>
+    <p class="hint">Remplacent les réglages de la semaine pour une date précise.</p>
+    <div id="exceptions"></div>
+    <button id="add-exception" class="small">+ Ajouter une date</button>
+
+    <h3>Marge autour des événements</h3>
+    <div class="field">
+      <input type="number" id="buffer" min="0" step="5">
+      <label for="buffer">minutes avant et après chaque événement de l'agenda (30 minutes au minimum sont toujours appliquées)</label>
+    </div>
+  </section>
+</main>
+
+<div class="savebar">
+  <div>
+    <span class="message" id="save-message"></span>
+    <button id="save-button" class="primary" disabled>Enregistrer le planning</button>
+  </div>
+</div>
+
+<script>
+const WEEKDAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
+const STATUS_LABELS = { idle: "Jamais lancé", running: "En cours…", success: "Réussi", failed: "Échec" };
+const TRIGGER_LABELS = { manual: "manuel", scheduled: "automatique" };
+
+const $ = (id) => document.getElementById(id);
+
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else if (key === "class") el.className = value;
+    else if (value === true) el.setAttribute(key, "");
+    else if (value !== false && value != null) el.setAttribute(key, value);
+  }
+  el.append(...children.filter((child) => child != null));
+  return el;
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Erreur ${response.status}`);
+  return body;
+}
+
+const formatDateTime = (iso) => new Date(iso).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+const formatDay = (iso) => new Date(iso).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+const formatTime = (iso) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+/* ---------- Pipeline ---------- */
+
+let runId = null;
+let lineCount = 0;
+let lastStatus = null;
+let pollTimer = null;
+
+function appendLogLines(lines) {
+  const consoleEl = $("console");
+  const stick = consoleEl.scrollTop + consoleEl.clientHeight >= consoleEl.scrollHeight - 8;
+  for (const line of lines) {
+    const level = (line.match(/\| (DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\s*\|/) || [])[1];
+    consoleEl.append(h("span", { class: level || "" }, line + "\n"));
+  }
+  if (stick) consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+async function pollRun() {
+  clearTimeout(pollTimer);
+  let status = lastStatus;
+  try {
+    let run = await api(`api/run?since=${lineCount}`);
+    if (run.started_at !== runId) {
+      // Nouveau lancement: on repart d'une console vide
+      runId = run.started_at;
+      lineCount = 0;
+      $("console").replaceChildren();
+      run = await api("api/run?since=0");
+    }
+    appendLogLines(run.lines);
+    lineCount = run.total_lines;
+    status = run.status;
+
+    $("run-status").textContent = STATUS_LABELS[status] || status;
+    $("run-status").className = `badge ${status}`;
+    $("run-button").disabled = status === "running";
+
+    const info = [];
+    if (run.started_at) info.push(`Dernier lancement (${TRIGGER_LABELS[run.trigger] || run.trigger}) : ${formatDateTime(run.started_at)}.`);
+    info.push(run.next_scheduled ? `Prochain lancement automatique : ${formatDateTime(run.next_scheduled)}.` : "Lancement automatique désactivé.");
+    $("run-info").textContent = info.join(" ");
+
+    if (lastStatus === "running" && status !== "running") loadResult();
+    lastStatus = status;
+  } catch (error) {
+    $("run-info").textContent = `Serveur injoignable : ${error.message}`;
+  }
+  pollTimer = setTimeout(pollRun, status === "running" ? 1000 : 10000);
+}
+
+$("run-button").addEventListener("click", async () => {
+  $("run-button").disabled = true;
+  try {
+    await api("api/run", { method: "POST" });
+  } catch (error) {
+    $("run-info").textContent = error.message;
+  }
+  pollRun();
+});
+
+/* ---------- Dernier résultat ---------- */
+
+async function loadResult() {
+  const container = $("result");
+  let result;
+  try {
+    result = await api("api/result");
+  } catch (error) {
+    container.replaceChildren(h("p", { class: "muted" }, `Impossible de charger le résultat : ${error.message}`));
+    return;
+  }
+
+  const planning = result.available ? result.data.planning : null;
+  if (!planning) {
+    $("result-date").textContent = "";
+    $("ics-link").hidden = true;
+    container.replaceChildren(h("p", { class: "muted" }, "Aucun résultat de pipeline complet pour le moment."));
+    return;
+  }
+
+  $("result-date").textContent = formatDateTime(result.updated_at);
+  $("ics-link").hidden = !planning.scheduled.length;
+
+  const links = Object.fromEntries((result.data.calendar_add_links || []).map((link) => [link.title, link.url]));
+  const parts = [];
+
+  if (planning.scheduled.length) {
+    const rows = planning.scheduled.map((item) => {
+      const url = links[item.title];
+      return h("tr", {},
+        h("td", { class: "title" }, item.title),
+        h("td", {}, formatDay(item.start_datetime)),
+        h("td", { class: "num" }, `${formatTime(item.start_datetime)} – ${formatTime(item.end_datetime)}`),
+        h("td", {}, item.salle || "—"),
+        h("td", {}, item.version || "—"),
+        h("td", { class: "num" }, Number(item.score).toFixed(2)),
+        h("td", {}, url && url.startsWith("https://") ? h("a", { href: url, target: "_blank", rel: "noopener" }, "Ajouter à l'agenda") : null),
+      );
+    });
+    parts.push(h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ...["Film", "Jour", "Horaire", "Salle", "Version", "Score", ""].map((label) => h("th", {}, label)))),
+      h("tbody", {}, ...rows),
+    )));
+  } else {
+    parts.push(h("p", { class: "muted" }, "Aucune séance planifiée."));
+  }
+
+  if (planning.unscheduled_titles.length) {
+    parts.push(h("h3", {}, "Films non planifiés"));
+    parts.push(h("ul", { class: "plain" }, ...planning.unscheduled_titles.map((title) => h("li", {}, title))));
+  }
+
+  const email = result.data.calendar_email;
+  if (email && email.error) parts.push(h("p", { class: "message err" }, `Envoi de l'email échoué : ${email.error}`));
+
+  container.replaceChildren(...parts);
+}
+
+/* ---------- Planning ---------- */
+
+let config = null;
+let exceptions = [];
+
+function markDirty() {
+  $("save-button").disabled = false;
+  $("save-message").textContent = "Modifications non enregistrées";
+  $("save-message").className = "message";
+}
+
+function numberInput(value, onChange, props = {}) {
+  return h("input", {
+    type: "number", min: "0.1", step: "0.1", value: value ?? "", ...props,
+    oninput: (event) => { onChange(event.target.value === "" ? null : Number(event.target.value)); markDirty(); },
+  });
+}
+
+function timeInput(value, onChange) {
+  return h("input", { type: "time", value, required: true, oninput: (event) => { onChange(event.target.value); markDirty(); } });
+}
+
+function windowsEditor(windows, rerender, emptyLabel) {
+  const rows = windows.map((slot, index) => h("div", { class: "window" },
+    timeInput(slot.start, (value) => { slot.start = value; }),
+    h("span", { class: "muted" }, "→"),
+    timeInput(slot.end, (value) => { slot.end = value; }),
+    h("label", {}, "poids"),
+    numberInput(slot.weight, (value) => { slot.weight = value; }, { "aria-label": "Poids du créneau" }),
+    h("button", { class: "icon", title: "Supprimer le créneau", "aria-label": "Supprimer le créneau", onclick: () => { windows.splice(index, 1); markDirty(); rerender(); } }, "✕"),
+  ));
+  return h("div", { class: "windows" },
+    ...(rows.length ? rows : [h("div", { class: "unavailable" }, emptyLabel)]),
+    h("div", {}, h("button", { class: "small", onclick: () => { windows.push({ start: "19:00", end: "23:00", weight: 1 }); markDirty(); rerender(); } }, "+ Créneau")),
+  );
+}
+
+function renderSchedule() {
+  const schedule = config.schedule;
+  $("schedule").replaceChildren(h("div", { class: "row" },
+    h("label", { class: "field" },
+      h("input", { type: "checkbox", checked: schedule.enabled, onchange: (event) => { schedule.enabled = event.target.checked; markDirty(); } }),
+      "Activé"),
+    h("div", { class: "chips" }, ...WEEKDAYS.map((day) => h("label", {},
+      h("input", { type: "checkbox", checked: schedule.days.includes(day), onchange: (event) => {
+        schedule.days = WEEKDAYS.filter((item) => item === day ? event.target.checked : schedule.days.includes(item));
+        markDirty();
+      } }),
+      day))),
+    h("div", { class: "field" }, h("label", {}, "à"), timeInput(schedule.time, (value) => { schedule.time = value; })),
+  ));
+}
+
+function renderWeek() {
+  $("week").replaceChildren(...WEEKDAYS.map((day) => h("div", { class: "day" },
+    h("div", { class: "day-name" }, day),
+    h("div", { class: "field" },
+      h("label", {}, "poids"),
+      numberInput(config.weekday_weights[day], (value) => { config.weekday_weights[day] = value; }, { "aria-label": `Poids du ${day}` })),
+    h("div", { class: "windows-cell" }, windowsEditor(config.weekly_availability[day], renderWeek, "Indisponible ce jour")),
+  )));
+}
+
+function renderExceptions() {
+  $("exceptions").replaceChildren(...exceptions.map((item, index) => h("div", { class: "day exception" },
+    h("div", { class: "field" },
+      h("input", { type: "date", value: item.date, required: true, "aria-label": "Date", oninput: (event) => { item.date = event.target.value; markDirty(); } })),
+    h("div", { class: "field" },
+      h("label", {}, "poids"),
+      numberInput(item.weight, (value) => { item.weight = value; }, { placeholder: "—", "aria-label": "Poids de la date", title: "Vide : poids habituel du jour" })),
+    h("div", { class: "windows-cell windows" },
+      h("label", { class: "field" },
+        h("input", { type: "checkbox", checked: item.windows !== null, onchange: (event) => { item.windows = event.target.checked ? [] : null; markDirty(); renderExceptions(); } }),
+        "Créneaux spécifiques"),
+      item.windows !== null ? windowsEditor(item.windows, renderExceptions, "Indisponible à cette date") : h("div", { class: "unavailable" }, "Créneaux habituels du jour"),
+      h("div", {}, h("button", { class: "small", onclick: () => { exceptions.splice(index, 1); markDirty(); renderExceptions(); } }, "Supprimer la date")),
+    ),
+  )));
+}
+
+async function loadConfig() {
+  config = await api("api/config");
+
+  // Chaque jour est explicité: un jour absent hérite des valeurs par défaut du fichier
+  config.weekly_availability = config.weekly_availability || {};
+  config.weekday_weights = config.weekday_weights || {};
+  for (const day of WEEKDAYS) {
+    config.weekly_availability[day] ??= structuredClone(config.default_availability || []);
+    config.weekday_weights[day] ??= config.default_day_weight ?? 1;
+  }
+
+  const daily = config.daily_availability || {};
+  const weights = config.day_weights || {};
+  exceptions = [...new Set([...Object.keys(daily), ...Object.keys(weights)])].sort().map((date) => ({
+    date,
+    weight: weights[date] ?? null,
+    windows: daily[date] ?? null,
+  }));
+
+  $("buffer").value = config.buffer_minutes ?? 0;
+  renderSchedule();
+  renderWeek();
+  renderExceptions();
+}
+
+$("buffer").addEventListener("input", markDirty);
+
+$("add-exception").addEventListener("click", () => {
+  exceptions.push({ date: new Date().toLocaleDateString("sv-SE"), weight: null, windows: [] });
+  markDirty();
+  renderExceptions();
+});
+
+$("save-button").addEventListener("click", async () => {
+  const message = $("save-message");
+  const payload = structuredClone(config);
+  payload.buffer_minutes = Math.round(Number($("buffer").value) || 0);
+  payload.daily_availability = {};
+  payload.day_weights = {};
+  for (const item of exceptions) {
+    if (item.windows !== null) payload.daily_availability[item.date] = item.windows;
+    if (item.weight !== null) payload.day_weights[item.date] = item.weight;
+  }
+
+  try {
+    if (new Set(exceptions.map((item) => item.date)).size !== exceptions.length) throw new Error("Deux exceptions portent la même date");
+    await api("api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    await loadConfig();
+    $("save-button").disabled = true;
+    message.textContent = "Planning enregistré";
+    message.className = "message ok";
+    pollRun();
+  } catch (error) {
+    message.textContent = error.message;
+    message.className = "message err";
+  }
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!$("save-button").disabled) event.preventDefault();
+});
+
+loadConfig().catch((error) => {
+  $("save-message").textContent = `Impossible de charger le planning : ${error.message}`;
+  $("save-message").className = "message err";
+});
+loadResult();
+pollRun();
+</script>
+</body>
+</html>

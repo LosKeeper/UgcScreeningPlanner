@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 
 import argparse
@@ -288,7 +287,7 @@ def main(argv=None):
             )
             write_json_output(payload, args.output_json)
     except Exception as exc:
-        logger.error("Erreur lors de la récupération de la page: {}", exc)
+        logger.error("Erreur lors de l'exécution: {}", exc)
         return 2
 
     return 0

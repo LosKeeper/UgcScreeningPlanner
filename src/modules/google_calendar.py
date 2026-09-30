@@ -10,10 +10,12 @@ import smtplib
 import ssl
 from typing import List, Optional
 from urllib.parse import parse_qs, quote, urlencode, urlparse
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 import requests
 from icalendar import Calendar, Event
+import recurring_ical_events
 
 
 @dataclass
@@ -56,7 +58,8 @@ class GoogleCalendarClient:
             )
 
         self.timezone_name = os.getenv(
-            "GOOGLE_CALENDAR_TIMEZONE", "Europe/Paris")
+            "GOOGLE_CALENDAR_TIMEZONE") or "Europe/Paris"
+        self.timezone = ZoneInfo(self.timezone_name)
         self.cinema_name = os.getenv(
             "UGC_CINEMA_NAME", "UGC Ciné Cité Strasbourg")
 
@@ -116,13 +119,14 @@ class GoogleCalendarClient:
         if value is None:
             return None
 
+        # Les heures sans fuseau et les journées entières sont en heure locale de l'agenda
         if isinstance(value, datetime):
             if value.tzinfo is None:
-                return value.replace(tzinfo=timezone.utc)
+                return value.replace(tzinfo=self.timezone)
             return value
 
         if isinstance(value, date):
-            return datetime.combine(value, time.min, tzinfo=timezone.utc)
+            return datetime.combine(value, time.min, tzinfo=self.timezone)
 
         return self._parse_event_datetime(str(value))
 
@@ -167,7 +171,7 @@ class GoogleCalendarClient:
                 continue
 
             # Filtre uniquement les événements marqués comme occupé (TRANSP:OPAQUE)
-            if event.transp != "opaque":
+            if event.transp != "opaque" or event.status == "cancelled":
                 continue
 
             if time_min and event.end_datetime and event.end_datetime < time_min:
@@ -191,11 +195,16 @@ class GoogleCalendarClient:
     ) -> List[CalendarEvent]:
         """Retourne les événements marqués comme occupé dans un intervalle donné."""
         calendar = self._download_calendar()
-        events = [
-            self._normalize_event(component)
-            for component in calendar.walk()
-            if component.name == "VEVENT"
-        ]
+        if time_min and time_max:
+            # Développe les événements récurrents (RRULE) sur l'intervalle demandé
+            components = recurring_ical_events.of(
+                calendar).between(time_min, time_max)
+        else:
+            components = [
+                component for component in calendar.walk()
+                if component.name == "VEVENT"
+            ]
+        events = [self._normalize_event(component) for component in components]
         return self._filter_events(events, time_min, time_max, max_results)
 
     def list_upcoming_events(self, max_results: int = 10) -> List[CalendarEvent]:
@@ -206,35 +215,21 @@ class GoogleCalendarClient:
     def get_dates_until_next_tuesday(self) -> List[date]:
         """Génère la même plage de dates que le scraper UGC: d'aujourd'hui au mardi suivant inclus."""
         today = datetime.now().date()
-        current_weekday = today.weekday()
-
-        if current_weekday < 1:
-            days_until_tuesday = 1 - current_weekday
-        elif current_weekday == 1:
-            days_until_tuesday = 7
-        else:
-            days_until_tuesday = (7 - current_weekday) + 1
-
-        next_tuesday = today + timedelta(days=days_until_tuesday)
-
-        dates = []
-        current = today
-        while current <= next_tuesday:
-            dates.append(current)
-            current += timedelta(days=1)
-
-        return dates
+        # Un mardi, on va jusqu'au mardi suivant (7 jours)
+        days_until_tuesday = (1 - today.weekday()) % 7 or 7
+        return [today + timedelta(days=offset)
+                for offset in range(days_until_tuesday + 1)]
 
     def list_events_for_ugc_date_range(self, max_results: int = 500) -> List[CalendarEvent]:
         """Retourne tous les événements marqués comme occupé sur la même plage de dates que les séances UGC."""
         dates = self.get_dates_until_next_tuesday()
-        local_tz = datetime.now().astimezone().tzinfo or timezone.utc
 
-        start_of_range = datetime.combine(dates[0], time.min, tzinfo=local_tz)
+        start_of_range = datetime.combine(
+            dates[0], time.min, tzinfo=self.timezone)
         end_of_range = datetime.combine(
             dates[-1] + timedelta(days=1),
             time.min,
-            tzinfo=local_tz,
+            tzinfo=self.timezone,
         )
 
         logger.info(
@@ -251,8 +246,9 @@ class GoogleCalendarClient:
     def list_events_for_day(self, target_day: date) -> List[CalendarEvent]:
         """Retourne les événements marqués comme occupé d'une journée donnée."""
         start_of_day = datetime.combine(
-            target_day, time.min, tzinfo=timezone.utc)
-        end_of_day = start_of_day + timedelta(days=1)
+            target_day, time.min, tzinfo=self.timezone)
+        end_of_day = datetime.combine(
+            target_day + timedelta(days=1), time.min, tzinfo=self.timezone)
         return self.list_events(time_min=start_of_day, time_max=end_of_day)
 
     def _build_screening_location(self, screening) -> str:
@@ -311,6 +307,7 @@ class GoogleCalendarClient:
         for screening in planned_screenings:
             event = Event()
             event.add("uid", self._build_event_uid(screening))
+            event.add("dtstamp", datetime.now(timezone.utc))
             event.add("summary", getattr(screening, "title", "Séance UGC"))
             event.add("dtstart", getattr(screening, "start_datetime"))
             event.add("dtend", getattr(screening, "end_datetime"))
@@ -342,6 +339,7 @@ class GoogleCalendarClient:
         event = Event()
         event.add(
             "uid", f"ugc-test-email-{start_dt.strftime('%Y%m%dT%H%M%S')}@ugc-webscrap")
+        event.add("dtstamp", datetime.now(timezone.utc))
         event.add("summary", "Test email UGC")
         event.add("dtstart", start_dt)
         event.add("dtend", end_dt)
@@ -438,12 +436,13 @@ class GoogleCalendarClient:
             "EMAIL_SUBJECT", "Séances UGC planifiées")
         message["From"] = sender
         message["To"] = target_recipient
+        # Dans .env, les retours à la ligne de EMAIL_BODY sont écrits "\n"
         message.set_content(
             body
             or os.getenv(
                 "EMAIL_BODY",
                 "Bonjour,\n\nVoici le fichier ICS des séances UGC planifiées automatiquement.\n",
-            )
+            ).replace("\\n", "\n")
         )
         message.add_attachment(
             attachment_path.read_bytes(),

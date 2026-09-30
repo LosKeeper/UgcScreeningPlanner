@@ -69,7 +69,7 @@ class UGCScrapper:
         self.cookie_url = os.getenv("UGC_COOKIE_URL", "https://www.ugc.fr/")
         self.session_file = Path(os.getenv(
             "UGC_SESSION_FILE",
-            str(Path(__file__).resolve().parent.parent / ".ugc_session.json")
+            str(Path(__file__).resolve().parents[2] / ".ugc_session.json")
         ))
 
     def _parse_extra_cookies(self, cookie_string: str) -> List[Dict[str, str]]:
@@ -255,7 +255,7 @@ class UGCScrapper:
                         logger.debug("Cookies acceptés")
                         page.wait_for_timeout(500)
                         break
-                except:
+                except Exception:
                     continue
 
             try:
@@ -290,13 +290,10 @@ class UGCScrapper:
                         logger.debug("Popup publicité fermé")
                         page.wait_for_timeout(500)
                         break
-                except:
+                except Exception:
                     continue
-
-            pass
         except Exception as e:
             logger.debug("Gestion des popups ignorée: {}", e)
-            pass
 
     def _login_interactive(self, browser: Browser) -> Page:
         """
@@ -673,30 +670,10 @@ class UGCScrapper:
     def get_dates_until_next_tuesday(self) -> List[str]:
         """Génère une liste de dates du jour jusqu'au mardi prochain inclus."""
         today = datetime.now().date()
-
-        # Le jour de la semaine (0=lundi, 1=mardi, ..., 6=dimanche)
-        current_weekday = today.weekday()
-
-        # Calculer le nombre de jours jusqu'au prochain mardi
-        # Si on est mardi (1), on veut le mardi suivant (7 jours)
-        # Sinon, on calcule les jours restants jusqu'au prochain mardi
-        if current_weekday < 1:  # lundi (0)
-            days_until_tuesday = 1 - current_weekday
-        elif current_weekday == 1:  # mardi
-            days_until_tuesday = 7  # prochain mardi
-        else:  # mercredi à dimanche (2-6)
-            days_until_tuesday = (7 - current_weekday) + 1
-
-        next_tuesday = today + timedelta(days=days_until_tuesday)
-
-        # Générer toutes les dates entre aujourd'hui et mardi prochain inclus
-        dates = []
-        current = today
-        while current <= next_tuesday:
-            dates.append(current.strftime("%Y-%m-%d"))
-            current += timedelta(days=1)
-
-        return dates
+        # Un mardi, on va jusqu'au mardi suivant (7 jours)
+        days_until_tuesday = (1 - today.weekday()) % 7 or 7
+        return [(today + timedelta(days=offset)).strftime("%Y-%m-%d")
+                for offset in range(days_until_tuesday + 1)]
 
     def _extract_watchlist_title(self, link) -> str:
         """Extrait le titre d'un film depuis la structure interne de la watchlist."""
@@ -784,7 +761,6 @@ class UGCScrapper:
 
         try:
             film_page.goto(film_url, wait_until="networkidle")
-            self._accept_cookies(film_page)
             release_date = self._extract_release_date(film_page.content())
             logger.debug("Date de sortie extraite pour {}: {}",
                          film_url, release_date)
@@ -1004,9 +980,16 @@ class UGCScrapper:
                                         )
                                         continue
 
+                                    try:
+                                        seance_date = self._parse_screening_date(
+                                            screening_date)
+                                    except ValueError:
+                                        # Attribut absent ou illisible: la séance est celle du jour affiché
+                                        seance_date = self._parse_screening_date(
+                                            date_str)
+
                                     seance = Seance(
-                                        date=self._parse_screening_date(
-                                            screening_date),
+                                        date=seance_date,
                                         heure_debut=heure_debut,
                                         heure_fin=self._parse_screening_time(
                                             hourend),
@@ -1015,9 +998,9 @@ class UGCScrapper:
                                     )
 
                                     # Ajouter la séance au film
-                                    if title not in result:
-                                        result[title] = []
-                                    result[title].append(seance)
+                                    seances = result.setdefault(title, [])
+                                    if seance not in seances:
+                                        seances.append(seance)
 
             browser.close()
 

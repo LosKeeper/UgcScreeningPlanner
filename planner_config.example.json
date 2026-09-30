@@ -67,5 +67,14 @@
         "dimanche": 1.1
     },
     "default_day_weight": 1.0,
-    "buffer_minutes": 30
+    "buffer_minutes": 30,
+    "daily_availability": {},
+    "day_weights": {},
+    "schedule": {
+        "enabled": true,
+        "days": [
+            "mardi"
+        ],
+        "time": "11:00"
+    }
 }

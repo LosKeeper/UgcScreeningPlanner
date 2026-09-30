@@ -5,3 +5,7 @@ playwright
 python-dotenv
 loguru
 icalendar
+recurring-ical-events
+tzdata
+fastapi
+uvicorn

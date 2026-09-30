@@ -8,15 +8,16 @@ Python tool that scrapes UGC cinema showtimes, cross-references them with your w
 ugc-webscrap/
 ├── src/
 │   ├── main.py         # Script principal
-│   └── modules/        # Modules Python du projet
-│       ├── __init__.py
-│       ├── google_calendar.py
-│       ├── planner.py
-│       └── ugc_scraper.py
+│   ├── modules/        # Modules Python du projet
+│   │   ├── __init__.py
+│   │   ├── google_calendar.py
+│   │   ├── planner.py
+│   │   └── ugc_scraper.py
+│   └── webapp/         # Interface web (FastAPI + page statique)
 ├── .env                # Configuration (URL du cinéma)
 ├── .env.example        # Exemple de configuration
 ├── requirements.txt    # Dépendances Python
-├── Dockerfile          # Image Docker avec Playwright + supercronic
+├── Dockerfile          # Image Docker avec Playwright + interface web
 ├── docker-compose.yml  # Stack Docker (Portainer-ready)
 ├── .dockerignore
 └── README.md
@@ -140,6 +141,26 @@ Les logs passent par `loguru` et s'affichent sur stderr. Vous pouvez ajuster leu
 
 Le pipeline principal ne fait plus de `print()` final sur stdout. Les résultats structurés sont écrits dans un fichier JSON uniquement si `--output-json` ou `UGC_OUTPUT_JSON` est défini.
 
+## Interface web
+
+Une page web permet de gérer le planner sans toucher aux fichiers :
+
+- **Pipeline** : relancer le pipeline complet et suivre ses logs en direct
+- **Dernier résultat** : séances planifiées, films non planifiés, liens « Ajouter à l'agenda » et téléchargement de l'ICS
+- **Planning** : disponibilités et poids par jour de la semaine, exceptions par date, marge autour des événements, jours et heure du lancement automatique
+
+Lancer le serveur :
+
+```bash
+uvicorn webapp.app:app --app-dir src --port 8000
+```
+
+Puis ouvrir http://localhost:8000. Les modifications sont enregistrées dans `planner_config.json` et prises en compte au lancement suivant, sans redémarrage.
+
+Le lancement automatique est géré par le serveur web (clé `schedule` de `planner_config.json`, par défaut le mardi à 11h) : il ne fonctionne que tant que le serveur tourne.
+
+**Attention** : l'interface n'a aucune authentification. Ne l'exposez que sur un réseau de confiance ou derrière un reverse proxy qui gère l'accès.
+
 ## Fonctionnement
 
 ### Google Calendar
@@ -153,6 +174,8 @@ GOOGLE_CALENDAR_ID=
 ```
 
 Le client se base sur l'URL partageable Google Calendar et télécharge le flux iCal public correspondant. Aucune authentification Google n'est nécessaire.
+
+Les événements récurrents sont développés sur la plage de dates, et les horaires sont ramenés au fuseau `GOOGLE_CALENDAR_TIMEZONE` (par défaut `Europe/Paris`).
 
 **Remarque** : Seuls les événements marqués comme **occupé** (TRANSP:OPAQUE) sont récupérés. Les événements marqués comme "libre" (TRANSP:TRANSPARENT) ou autre sont automatiquement ignorés. Cela permet de filtrer que les créneaux effectivement réservés.
 
@@ -255,6 +278,14 @@ Le format recommandé est générique par jour de semaine avec des clés frança
 - `samedi`
 - `dimanche`
 
+Des exceptions par date (clés `AAAA-MM-JJ`) peuvent être définies dans `daily_availability` (créneaux, liste vide = indisponible) et `day_weights` (poids). Elles sont prioritaires sur les réglages du jour de semaine, eux-mêmes prioritaires sur `default_availability` et `default_day_weight`.
+
+La clé `schedule` règle le lancement automatique de l'interface web :
+
+```json
+"schedule": { "enabled": true, "days": ["mardi"], "time": "11:00" }
+```
+
 ### Scraping des séances
 Le scraper récupère les séances de cinéma du jour jusqu'au mardi suivant inclus. Les données sont retournées au format JSON avec pour chaque film:
 - Date de la séance
@@ -283,7 +314,9 @@ Le projet est dockerisé et prêt à être déployé via **Portainer** ou tout a
 docker compose up --build -d
 ```
 
-Le container tourne en continu et exécute automatiquement le pipeline **tous les mardis à 11h** (heure de Paris) grâce à [supercronic](https://github.com/aptible/supercronic).
+Le container tourne en continu, sert l'[interface web](#interface-web) sur le port **8000** et exécute automatiquement le pipeline **tous les mardis à 11h** (heure de Paris) par défaut. Les jours et l'heure se modifient depuis l'interface.
+
+`planner_config.json` doit exister sur l'hôte avant le premier lancement (`cp planner_config.example.json planner_config.json`).
 
 ### Déploiement via Portainer
 
@@ -301,12 +334,12 @@ Le container redémarre automatiquement (`restart: unless-stopped`).
 | `google_credentials.json` | `/app/google_credentials.json` | Credentials OAuth Google (lecture seule) |
 | `.google_calendar_token.json` | `/app/.google_calendar_token.json` | Token Google Calendar |
 | `.ugc_session.json` | `/app/.ugc_session.json` | Session Playwright persistée |
-| `planner_config.json` | `/app/planner_config.json` | Configuration du planner (lecture seule) |
-| `output/` | `/app/output/` | Sortie ICS + JSON |
+| `planner_config.json` | `/app/planner_config.json` | Configuration du planner (modifiée par l'interface web) |
+| `output/` | `/app/output/` | Sortie ICS + JSON, logs du dernier lancement |
 
 ### Lancement manuel dans le container
 
-Pour exécuter le script à la demande (hors du cron) :
+Pour exécuter le script à la demande sans passer par l'interface web :
 
 ```bash
 docker exec ugc-scraper python src/main.py

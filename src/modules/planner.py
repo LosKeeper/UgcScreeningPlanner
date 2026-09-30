@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
@@ -70,6 +71,9 @@ class ScreeningPlanner:
         self.config_path = Path(config_path or os.getenv(
             "UGC_PLANNER_CONFIG", self.DEFAULT_CONFIG_PATH))
         self.config = self._load_config()
+        # Les séances UGC sont en heure locale: les événements agenda y sont ramenés
+        self.timezone = ZoneInfo(
+            os.getenv("GOOGLE_CALENDAR_TIMEZONE") or "Europe/Paris")
 
     def _load_config(self) -> dict:
         if not self.config_path.exists():
@@ -98,13 +102,13 @@ class ScreeningPlanner:
         return datetime.strptime(value, "%H:%M").time()
 
     def _get_windows_for_day(self, day: date) -> List[AvailabilityWindow]:
-        weekday_key = self._weekday_key(day)
+        # Priorité: exception par date > jour de semaine > défaut
         raw_windows = self.config.get(
-            "weekly_availability", {}).get(weekday_key)
+            "daily_availability", {}).get(day.isoformat())
 
         if raw_windows is None:
-            raw_windows = self.config.get("daily_availability", {}).get(
-                day.isoformat(),
+            raw_windows = self.config.get("weekly_availability", {}).get(
+                self._weekday_key(day),
                 self.config.get("default_availability", []),
             )
 
@@ -118,12 +122,12 @@ class ScreeningPlanner:
         ]
 
     def _get_day_weight(self, day: date) -> float:
-        weekday_key = self._weekday_key(day)
+        # Priorité: exception par date > jour de semaine > défaut
         return float(
-            self.config.get("weekday_weights", {}).get(
-                weekday_key,
-                self.config.get("day_weights", {}).get(
-                    day.isoformat(),
+            self.config.get("day_weights", {}).get(
+                day.isoformat(),
+                self.config.get("weekday_weights", {}).get(
+                    self._weekday_key(day),
                     self.config.get("default_day_weight", 1.0),
                 ),
             )
@@ -133,7 +137,7 @@ class ScreeningPlanner:
         configured_minutes = int(self.config.get("buffer_minutes", 0))
         return timedelta(minutes=max(30, configured_minutes))
 
-    def _film_weight(self, film: WatchlistFilm, reference_day: date, last_day: date) -> float:
+    def _film_weight(self, film: WatchlistFilm, reference_day: date) -> float:
         if not film.release_date:
             return 1.0
 
@@ -166,13 +170,12 @@ class ScreeningPlanner:
             ]
 
         reference_day = min(screening_dates)
-        last_day = max(screening_dates)
 
         ranked_films = [
             WeightedWatchlistFilm(
                 title=film.title,
                 release_date=film.release_date,
-                weight=self._film_weight(film, reference_day, last_day),
+                weight=self._film_weight(film, reference_day),
             )
             for film in watchlist
         ]
@@ -193,17 +196,21 @@ class ScreeningPlanner:
                 end_dt += timedelta(days=1)
         return start_dt, end_dt
 
+    def _to_local_naive(self, value: datetime) -> datetime:
+        """Ramène une date/heure agenda en heure locale sans fuseau, comme les séances UGC."""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(self.timezone).replace(tzinfo=None)
+
     def _event_bounds(self, event: CalendarEvent) -> Optional[Tuple[datetime, datetime]]:
         if event.start_datetime is None:
             return None
 
-        start_dt = event.start_datetime.replace(
-            tzinfo=None) if event.start_datetime.tzinfo else event.start_datetime
+        start_dt = self._to_local_naive(event.start_datetime)
         if event.end_datetime is None:
             end_dt = start_dt
         else:
-            end_dt = event.end_datetime.replace(
-                tzinfo=None) if event.end_datetime.tzinfo else event.end_datetime
+            end_dt = self._to_local_naive(event.end_datetime)
         return start_dt, end_dt
 
     def _fits_window(self, screening: Seance, start_dt: datetime, end_dt: datetime) -> Optional[AvailabilityWindow]:
@@ -219,31 +226,35 @@ class ScreeningPlanner:
     def _overlaps(self, first: Tuple[datetime, datetime], second: Tuple[datetime, datetime]) -> bool:
         return first[0] < second[1] and second[0] < first[1]
 
-    def _is_free_from_calendar(self, start_dt: datetime, end_dt: datetime, events: List[CalendarEvent]) -> bool:
-        buffered = (start_dt - self._buffer(), end_dt + self._buffer())
-        for event in events:
-            bounds = self._event_bounds(event)
-            if bounds and self._overlaps(buffered, bounds):
-                return False
-        return True
+    def _buffered(self, start_dt: datetime, end_dt: datetime) -> Tuple[datetime, datetime]:
+        buffer = self._buffer()
+        return start_dt - buffer, end_dt + buffer
+
+    def _is_free_from_calendar(
+        self,
+        start_dt: datetime,
+        end_dt: datetime,
+        busy_intervals: List[Tuple[datetime, datetime]],
+    ) -> bool:
+        buffered = self._buffered(start_dt, end_dt)
+        return not any(self._overlaps(buffered, busy) for busy in busy_intervals)
 
     def _build_candidate(
         self,
         film: WatchlistFilm,
         screening: Seance,
-        events: List[CalendarEvent],
+        busy_intervals: List[Tuple[datetime, datetime]],
         reference_day: date,
-        last_day: date,
     ) -> Optional[PlannedScreening]:
         start_dt, end_dt = self._screening_bounds(screening)
         window = self._fits_window(screening, start_dt, end_dt)
         if window is None:
             return None
-        if not self._is_free_from_calendar(start_dt, end_dt, events):
+        if not self._is_free_from_calendar(start_dt, end_dt, busy_intervals):
             return None
 
         day_weight = self._get_day_weight(screening.date)
-        film_weight = self._film_weight(film, reference_day, last_day)
+        film_weight = self._film_weight(film, reference_day)
         score = day_weight * window.weight * film_weight
 
         return PlannedScreening(
@@ -266,56 +277,62 @@ class ScreeningPlanner:
     ) -> PlanningResult:
         titles = sorted(candidates_by_title, key=lambda title: (
             len(candidates_by_title[title]), title))
-        best_selection: List[PlannedScreening] = []
-        best_score = float("-inf")
 
-        def backtrack(index: int, selected: List[PlannedScreening], total_score: float) -> None:
-            nonlocal best_selection, best_score
-
-            if index >= len(titles):
-                if len(selected) > len(best_selection) or (
-                    len(selected) == len(
-                        best_selection) and total_score > best_score
-                ):
-                    best_selection = selected.copy()
-                    best_score = total_score
-                return
-
-            remaining = len(titles) - index
-            if len(selected) + remaining < len(best_selection):
-                return
-
-            title = titles[index]
-            current_candidates = sorted(
+        # Une seule séance par jour: pour un film et un jour donnés, seule la
+        # meilleure séance (score le plus haut, puis la plus tôt) peut être retenue.
+        best_by_day: Dict[str, Dict[date, PlannedScreening]] = {}
+        for title in titles:
+            best_by_day[title] = {}
+            for candidate in sorted(
                 candidates_by_title[title],
-                key=lambda candidate: (
-                    -candidate.score,
-                    candidate.start_datetime,
-                ),
-            )
+                key=lambda candidate: (-candidate.score,
+                                       candidate.start_datetime),
+            ):
+                best_by_day[title].setdefault(
+                    candidate.screening_date, candidate)
 
-            for candidate in current_candidates:
-                if any(candidate.screening_date == existing.screening_date for existing in selected):
-                    continue
+        day_bits = {
+            day: 1 << index
+            for index, day in enumerate(sorted({
+                day for days in best_by_day.values() for day in days
+            }))
+        }
 
-                if any(
-                    self._overlaps(
-                        (candidate.start_datetime - self._buffer(),
-                         candidate.end_datetime + self._buffer()),
-                        (existing.start_datetime - self._buffer(),
-                         existing.end_datetime + self._buffer()),
+        # Programmation dynamique sur les jours occupés: pour chaque ensemble de
+        # jours pris, on garde le meilleur planning (nombre de films, puis score).
+        states: Dict[int, Tuple[int, float, Tuple[PlannedScreening, ...]]] = {
+            0: (0, 0.0, ())}
+
+        for title in titles:
+            next_states = dict(states)
+            for mask, (count, total_score, selected) in states.items():
+                for day, candidate in best_by_day[title].items():
+                    if mask & day_bits[day]:
+                        continue
+
+                    # Garde-fou: une séance finissant après minuit ne doit pas
+                    # chevaucher celle du lendemain
+                    buffered = self._buffered(
+                        candidate.start_datetime, candidate.end_datetime)
+                    if any(
+                        self._overlaps(buffered, self._buffered(
+                            existing.start_datetime, existing.end_datetime))
+                        for existing in selected
+                    ):
+                        continue
+
+                    new_mask = mask | day_bits[day]
+                    new_state = (
+                        count + 1,
+                        total_score + candidate.score,
+                        selected + (candidate,),
                     )
-                    for existing in selected
-                ):
-                    continue
+                    current = next_states.get(new_mask)
+                    if current is None or new_state[:2] > current[:2]:
+                        next_states[new_mask] = new_state
+            states = next_states
 
-                selected.append(candidate)
-                backtrack(index + 1, selected, total_score + candidate.score)
-                selected.pop()
-
-            backtrack(index + 1, selected, total_score)
-
-        backtrack(0, [], 0.0)
+        best_selection = max(states.values(), key=lambda state: state[:2])[2]
         scheduled_titles = {item.title for item in best_selection}
         unscheduled_titles = [
             title for title in titles if title not in scheduled_titles]
@@ -336,15 +353,19 @@ class ScreeningPlanner:
             return PlanningResult(scheduled=[], unscheduled_titles=[])
 
         reference_day = min(
-            screening.date
-            for seances in screenings.values()
-            for screening in seances
+            (
+                screening.date
+                for seances in screenings.values()
+                for screening in seances
+            ),
+            default=date.today(),
         )
-        last_day = max(
-            screening.date
-            for seances in screenings.values()
-            for screening in seances
-        )
+
+        busy_intervals = [
+            bounds
+            for event in calendar_events
+            if (bounds := self._event_bounds(event))
+        ]
 
         watchlist_by_title = {film.title: film for film in watchlist}
         candidates_by_title: Dict[str, List[PlannedScreening]] = {}
@@ -357,7 +378,7 @@ class ScreeningPlanner:
             candidates = [
                 candidate
                 for screening in seances
-                if (candidate := self._build_candidate(film, screening, calendar_events, reference_day, last_day))
+                if (candidate := self._build_candidate(film, screening, busy_intervals, reference_day))
             ]
             candidates_by_title[title] = candidates
 

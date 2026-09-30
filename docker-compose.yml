@@ -4,6 +4,8 @@ services:
     container_name: ugc-scraper
     restart: unless-stopped
     init: true
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     environment:
@@ -14,7 +16,7 @@ services:
     volumes:
       # Session Playwright persistée (login UGC)
       - ./.ugc_session.json:/app/.ugc_session.json
-      # Configuration du planner
-      - ./planner_config.json:/app/planner_config.json:ro
+      # Configuration du planner (modifiable depuis l'interface web)
+      - ./planner_config.json:/app/planner_config.json
       # Sortie ICS + JSON
       - ./output:/app/output
