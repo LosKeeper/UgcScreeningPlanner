@@ -266,6 +266,10 @@ class GoogleCalendarClient:
         if version:
             lines.append(f"Version: {version}")
 
+        pub_min = getattr(screening, "pub_min", None)
+        if pub_min is not None:
+            lines.append(f"Pub estimée: ~{pub_min} min")
+
         release_date = getattr(screening, "release_date", None)
         if release_date:
             lines.append(f"Sortie: {release_date.isoformat()}")

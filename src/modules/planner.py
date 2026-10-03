@@ -36,6 +36,7 @@ class PlannedScreening:
     availability_weight: float
     film_weight: float
     score: float
+    pub_min: Optional[int] = None
 
 
 @dataclass
@@ -269,6 +270,7 @@ class ScreeningPlanner:
             availability_weight=window.weight,
             film_weight=film_weight,
             score=score,
+            pub_min=screening.pub_min,
         )
 
     def _select_best_plan(

@@ -147,6 +147,7 @@ Une page web permet de gérer le planner sans toucher aux fichiers :
 
 - **Pipeline** : relancer le pipeline complet et suivre ses logs en direct
 - **Dernier résultat** : séances planifiées, films non planifiés, liens « Ajouter à l'agenda » et téléchargement de l'ICS
+- **Statistiques (SQL)** : requêtes en lecture seule sur la [base d'historique](#historique-des-séances-base-sqlite), avec exemples prêts à l'emploi et export CSV
 - **Planning** : disponibilités et poids par jour de la semaine, exceptions par date, marge autour des événements, jours et heure du lancement automatique
 
 Lancer le serveur :
@@ -292,6 +293,36 @@ Le scraper récupère les séances de cinéma du jour jusqu'au mardi suivant inc
 - Heure de début et de fin
 - Version (VF, VO, etc.)
 - Numéro de salle
+- Temps de pub estimé (`pub_min`)
+
+Le temps de pub estimé est aussi ajouté à la description de chaque séance planifiée dans l'agenda (« Pub estimée: ~21 min »).
+
+### Historique des séances (base SQLite)
+À chaque scraping des séances (pipeline complet ou `--seances`), toutes les données brutes du site, avant filtrage VO/VF, sont enregistrées dans une base SQLite (`UGC_DB_PATH`, par défaut `output/ugc_stats.db`). Une erreur d'écriture en base est simplement loguée et ne fait pas échouer le pipeline.
+
+| Table | Contenu |
+|---|---|
+| `cinemas` | Cinémas scrapés (identifiant UGC) |
+| `films` | Films à l'affiche : durée, date de sortie, `first_seen_at` / `last_seen_at` (première et dernière exécution où le film a été vu) |
+| `rooms` | Salles de chaque cinéma |
+| `screenings` | Séances (identifiant UGC) : salle, début, fin annoncée, version, accessibilité PMR, premier et dernier scraping où elles ont été vues |
+| `scrape_runs` | Chaque exécution : date, mode, statut, nombre de films et séances |
+
+Vues prêtes à l'emploi :
+
+| Vue | Contenu |
+|---|---|
+| `v_screening_ads` | Chaque séance avec son temps de pub : `ad_min` = (fin annoncée − début) − durée du film |
+| `v_room_films` | Films diffusés dans chaque salle, nombre de séances et temps de pub moyen |
+| `v_film_share` | Part des séances de chaque film par semaine cinéma (mercredi → mardi) |
+| `v_vo_share` | Part de séances en VO par film |
+| `v_film_on_screen` | Période à l'affiche de chaque film (avant-premières exclues) |
+
+Exemple :
+
+```bash
+sqlite3 output/ugc_stats.db "SELECT title, ROUND(AVG(ad_min), 1) AS pub_moyenne FROM v_screening_ads GROUP BY film_id ORDER BY pub_moyenne DESC;"
+```
 
 ### Scraping de la watchlist
 Nécessite une authentification. Le scraper se connecte à chaque exécution :
@@ -335,7 +366,7 @@ Le container redémarre automatiquement (`restart: unless-stopped`).
 | `.google_calendar_token.json` | `/app/.google_calendar_token.json` | Token Google Calendar |
 | `.ugc_session.json` | `/app/.ugc_session.json` | Session Playwright persistée |
 | `planner_config.json` | `/app/planner_config.json` | Configuration du planner (modifiée par l'interface web) |
-| `output/` | `/app/output/` | Sortie ICS + JSON, logs du dernier lancement |
+| `output/` | `/app/output/` | Sortie ICS + JSON, logs du dernier lancement, base SQLite d'historique |
 
 ### Lancement manuel dans le container
 

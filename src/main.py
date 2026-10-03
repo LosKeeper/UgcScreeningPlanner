@@ -12,7 +12,7 @@ import unicodedata
 
 from dotenv import load_dotenv
 from loguru import logger
-from modules import GoogleCalendarClient, ScreeningPlanner, UGCScrapper
+from modules import GoogleCalendarClient, ScrapeRunRecorder, ScreeningPlanner, UGCScrapper
 
 # Charger les variables d'environnement depuis .env
 load_dotenv()
@@ -66,6 +66,14 @@ def write_json_output(payload, output_path: str | None) -> None:
         encoding="utf-8",
     )
     logger.success("Sortie JSON écrite dans {}", target)
+
+
+def scrape_and_store(scrapper: UGCScrapper, url: str, mode: str):
+    """Scrape les séances, les historise en base et retourne celles du planner."""
+    with ScrapeRunRecorder(mode) as recorder:
+        snapshot = scrapper.scrape_cinema(url)
+        recorder.save(snapshot)
+    return scrapper.to_seances(snapshot)
 
 
 def main(argv=None):
@@ -133,7 +141,7 @@ def main(argv=None):
 
         if args.seances:
             logger.info("Mode séances uniquement")
-            screenings = scrapper.scrape_url(args.url)
+            screenings = scrape_and_store(scrapper, args.url, "seances")
             logger.success(
                 "Séances récupérées pour {} film(s)", len(screenings))
             payload = {
@@ -154,7 +162,7 @@ def main(argv=None):
             logger.info("Watchlist brute: {} film(s)", len(watchlist))
 
             logger.info("Étape 2/4 - Récupération des séances UGC")
-            screenings = scrapper.scrape_url(args.url)
+            screenings = scrape_and_store(scrapper, args.url, "pipeline")
             logger.info("Séances récupérées pour {} film(s)", len(screenings))
 
             logger.info(

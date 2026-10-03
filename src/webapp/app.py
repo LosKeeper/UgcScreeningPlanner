@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 # Charger les variables d'environnement depuis .env
 load_dotenv()
 
+from modules.stats_db import QueryError, describe_schema, run_readonly_query  # noqa: E402
+
 from .config_store import ConfigError, get_schedule, load_config, resolve_path, save_config  # noqa: E402
 from .runner import PipelineRunner, output_json_path  # noqa: E402
 from .scheduler import Scheduler, next_run  # noqa: E402
@@ -91,3 +93,24 @@ def get_result_ics():
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Aucun fichier ICS généré")
     return FileResponse(path, media_type="text/calendar", filename=path.name)
+
+
+@app.post("/api/sql")
+def post_sql(payload: dict = Body(...)):
+    query = payload.get("query")
+    if not isinstance(query, str):
+        raise HTTPException(status_code=422, detail="Champ « query » manquant")
+    try:
+        return run_readonly_query(query)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except QueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.get("/api/sql/schema")
+def get_sql_schema():
+    try:
+        return describe_schema()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

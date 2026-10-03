@@ -21,6 +21,60 @@ class Seance:
     heure_fin: Optional[time]
     version: str
     salle: str
+    pub_min: Optional[int] = None
+
+
+@dataclass
+class FilmInfo:
+    """Informations d'un film à l'affiche, telles qu'affichées par UGC."""
+    id: int
+    title: str
+    duration_min: Optional[int]
+    release_date: Optional[date]
+
+
+@dataclass
+class RawScreening:
+    """Séance brute telle que publiée par UGC, avant tout filtrage."""
+    showing_id: Optional[int]
+    film_id: int
+    title: str
+    cinema_id: Optional[int]
+    cinema_name: Optional[str]
+    date: date
+    heure_debut: time
+    heure_fin: Optional[time]
+    version: str
+    room: Optional[str]
+    is_pmr: bool
+
+    @property
+    def start_datetime(self) -> datetime:
+        return datetime.combine(self.date, self.heure_debut)
+
+    @property
+    def end_datetime(self) -> Optional[datetime]:
+        """Fin annoncée, reportée au lendemain si la séance passe minuit."""
+        if self.heure_fin is None:
+            return None
+        end = datetime.combine(self.date, self.heure_fin)
+        return end + timedelta(days=1) if end <= self.start_datetime else end
+
+
+@dataclass
+class CinemaSnapshot:
+    """Ensemble des films et séances récupérés sur la page d'un cinéma."""
+    url: str
+    films: Dict[int, FilmInfo]
+    screenings: List[RawScreening]
+
+    @property
+    def cinema_id(self) -> Optional[int]:
+        return next((s.cinema_id for s in self.screenings if s.cinema_id is not None), None)
+
+    @property
+    def cinema_name(self) -> Optional[str]:
+        return next((s.cinema_name for s in self.screenings if s.cinema_name), None)
 
 
 @dataclass
@@ -849,11 +903,154 @@ class UGCScrapper:
                 page.close()
                 browser.close()
 
-    def scrape_url(self, url: str) -> Dict[str, List[Seance]]:
-        """Scrape l'URL donnée et retourne un mapping titre -> séances."""
+    def _parse_int(self, raw_value: Optional[str]) -> Optional[int]:
+        """Convertit un attribut numérique UGC, None s'il est absent ou invalide."""
+        try:
+            return int(str(raw_value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _parse_duration(self, raw_value: str) -> Optional[int]:
+        """Convertit une durée UGC du type « (2h39) » en minutes."""
+        match = re.search(r"\((\d+)h(\d{0,2})\)", raw_value)
+        if not match:
+            return None
+        hours, minutes = match.groups()
+        return int(hours) * 60 + int(minutes or 0)
+
+    def _parse_film_info(self, film_div, film_id: int, title: str) -> FilmInfo:
+        """Extrait durée et date de sortie depuis le bloc d'un film."""
+        duration_min = None
+        release_date = None
+
+        for paragraph in film_div.select("div.info-wrapper.main div.group-info p"):
+            text = paragraph.get_text(" ", strip=True)
+            if text.lower().startswith("sortie le"):
+                release_date = self._parse_french_release_date(
+                    text[len("sortie le"):])
+            elif duration_min is None:
+                duration_min = self._parse_duration(text)
+
+        return FilmInfo(
+            id=film_id,
+            title=title,
+            duration_min=duration_min,
+            release_date=release_date,
+        )
+
+    def _parse_screening_button(
+        self, button, film_id: int, title: str, date_str: str
+    ) -> Optional[RawScreening]:
+        """Extrait une séance brute depuis son bouton de réservation."""
+        version = button.get("data-version", "")
+        hourstart_elem = button.find(
+            "div", class_="screening-start") or button.find(
+                "div", class_="screening-time-start")
+        hourend_elem = button.find(
+            "div", class_="screening-end") or button.find(
+                "div", class_="screening-time-end")
+        salle_elem = button.find(
+            "div", class_="color--white text-capitalize screening-detail") or button.find(
+                "div", class_="color--white text-capitalize screening-room")
+
+        if not version:
+            version_elem = button.find("span", class_="screening-lang")
+            version = version_elem.get_text(
+                strip=True) if version_elem else "VF"
+
+        if not hourstart_elem:
+            return None
+
+        hourstart_raw = hourstart_elem.get_text(strip=True)
+        hourstart = self._extract_hhmm(hourstart_raw) or hourstart_raw
+        try:
+            heure_debut = self._parse_screening_time(hourstart)
+        except ValueError:
+            heure_debut = None
+        if heure_debut is None:
+            logger.debug("Horaire de début illisible ignoré: {}", hourstart)
+            return None
+
+        heure_fin = None
+        if hourend_elem:
+            hourend = self._extract_hhmm(hourend_elem.get_text(strip=True))
+            heure_fin = self._parse_screening_time(hourend) if hourend else None
+
+        try:
+            seance_date = self._parse_screening_date(
+                button.get("data-seancedate", ""))
+        except ValueError:
+            # Attribut absent ou illisible: la séance est celle du jour affiché
+            seance_date = self._parse_screening_date(date_str)
+
+        room = salle_elem.get_text(" ", strip=True) if salle_elem else None
+
+        return RawScreening(
+            showing_id=self._parse_int(button.get("data-showing")),
+            film_id=film_id,
+            title=title,
+            cinema_id=self._parse_int(button.get("data-cinemaid")),
+            cinema_name=button.get("data-cinema") or None,
+            date=seance_date,
+            heure_debut=heure_debut,
+            heure_fin=heure_fin,
+            version=version,
+            room=room or None,
+            is_pmr=button.find(class_="icon-pmr") is not None,
+        )
+
+    def _parse_showings_page(self, html_content: str, date_str: str, snapshot: CinemaSnapshot) -> None:
+        """Ajoute au snapshot les films et séances présents dans le HTML d'une date."""
+        soup = BeautifulSoup(html_content, "html.parser")
+        seen = {
+            screening.showing_id or (
+                screening.film_id, screening.start_datetime, screening.room, screening.version)
+            for screening in snapshot.screenings
+        }
+
+        for film_div in soup.find_all("div", id=re.compile(r"bloc-showing-film-\d+")):
+            title_elem = film_div.find(
+                "a", id=re.compile(r"goToFilm_\d+_info_title"))
+            if not title_elem:
+                continue
+
+            title = title_elem.get_text(strip=True)
+            film_id = int(re.search(r"\d+", film_div["id"]).group())
+
+            screening_list = film_div.find(
+                "ul", class_="component--screening-cards no-bullets d-flex flex-wrap p-0"
+            )
+            if not screening_list:
+                continue
+
+            for li in screening_list.find_all("li"):
+                button = li.find("button")
+                if not button:
+                    continue
+
+                screening = self._parse_screening_button(
+                    button, film_id, title, date_str)
+                if screening is None:
+                    continue
+
+                key = screening.showing_id or (
+                    screening.film_id, screening.start_datetime, screening.room, screening.version)
+                if key in seen:
+                    continue
+                seen.add(key)
+                snapshot.screenings.append(screening)
+                # Seuls les films avec au moins une séance sont conservés
+                if film_id not in snapshot.films:
+                    snapshot.films[film_id] = self._parse_film_info(
+                        film_div, film_id, title)
+
+    def scrape_cinema(self, url: str) -> CinemaSnapshot:
+        """Scrape l'URL donnée et retourne tous les films et séances, sans filtrage."""
         dates_to_scrape = self.get_dates_until_next_tuesday()
         logger.info("Récupération des séances pour les dates: {}",
                     ', '.join(dates_to_scrape))
+
+        snapshot = CinemaSnapshot(url=url, films={}, screenings=[])
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -870,8 +1067,6 @@ class UGCScrapper:
 
             # Accepter les cookies si le popup apparaît
             self._accept_cookies(page)
-
-            result: Dict[str, List[Seance]] = {}
 
             for date_str in dates_to_scrape:
                 logger.debug("Récupération de la date {}", date_str)
@@ -910,106 +1105,52 @@ class UGCScrapper:
                     )
                     continue
 
-                html_content = page.content()
-
-                soup = BeautifulSoup(html_content, "html.parser")
-
-                film_divs = soup.find_all(
-                    "div", id=re.compile(r"bloc-showing-film-\d+"))
-
-                for film_div in film_divs:
-                    title_elem = film_div.find(
-                        "a", id=re.compile(r"goToFilm_\d+_info_title"))
-                    if not title_elem:
-                        continue
-
-                    title = title_elem.get_text(strip=True)
-
-                    screening_list = film_div.find(
-                        "ul", class_="component--screening-cards no-bullets d-flex flex-wrap p-0"
-                    )
-
-                    if screening_list:
-                        for li in screening_list.find_all("li"):
-                            button = li.find("button")
-                            if button:
-                                screening_date = button.get(
-                                    "data-seancedate", "")
-                                version = button.get("data-version", "")
-                                hourstart_elem = button.find(
-                                    "div", class_="screening-start") or button.find(
-                                        "div", class_="screening-time-start")
-                                hourend_elem = button.find(
-                                    "div", class_="screening-end") or button.find(
-                                        "div", class_="screening-time-end")
-                                salle_elem = button.find(
-                                    "div", class_="color--white text-capitalize screening-detail") or button.find(
-                                        "div", class_="color--white text-capitalize screening-room")
-
-                                if not version:
-                                    version_elem = button.find(
-                                        "span", class_="screening-lang")
-                                    version = version_elem.get_text(
-                                        strip=True) if version_elem else "VF"
-
-                                if hourstart_elem:
-                                    hourstart_raw = hourstart_elem.get_text(
-                                        strip=True)
-                                    hourstart = self._extract_hhmm(
-                                        hourstart_raw) or hourstart_raw
-
-                                    hourend = "Fin inconnue"
-                                    if hourend_elem:
-                                        hourend_raw = hourend_elem.get_text(
-                                            strip=True)
-                                        hourend = self._extract_hhmm(
-                                            hourend_raw) or "Fin inconnue"
-
-                                    salle = "inconnue"
-                                    if salle_elem:
-                                        salle_text = salle_elem.get_text(
-                                            strip=True)
-                                        salle = salle_text.split(
-                                            " ", 1)[1] if " " in salle_text else salle_text
-
-                                    heure_debut = self._parse_screening_time(
-                                        hourstart)
-                                    if heure_debut is None:
-                                        logger.debug(
-                                            "Horaire de début illisible ignoré: {}", hourstart
-                                        )
-                                        continue
-
-                                    try:
-                                        seance_date = self._parse_screening_date(
-                                            screening_date)
-                                    except ValueError:
-                                        # Attribut absent ou illisible: la séance est celle du jour affiché
-                                        seance_date = self._parse_screening_date(
-                                            date_str)
-
-                                    seance = Seance(
-                                        date=seance_date,
-                                        heure_debut=heure_debut,
-                                        heure_fin=self._parse_screening_time(
-                                            hourend),
-                                        version=version,
-                                        salle=salle
-                                    )
-
-                                    # Ajouter la séance au film
-                                    seances = result.setdefault(title, [])
-                                    if seance not in seances:
-                                        seances.append(seance)
+                self._parse_showings_page(page.content(), date_str, snapshot)
 
             browser.close()
 
+        logger.info("{} film(s) et {} séance(s) brutes récupérés",
+                    len(snapshot.films), len(snapshot.screenings))
+        return snapshot
+
+    def _compute_pub_min(self, screening: RawScreening, film: Optional[FilmInfo]) -> Optional[int]:
+        """Temps de pub estimé: durée du créneau annoncé moins la durée du film."""
+        end = screening.end_datetime
+        if end is None or film is None or film.duration_min is None:
+            return None
+
+        slot_min = round((end - screening.start_datetime).total_seconds() / 60)
+        pub_min = slot_min - film.duration_min
+        return pub_min if pub_min >= 0 else None
+
+    def to_seances(self, snapshot: CinemaSnapshot) -> Dict[str, List[Seance]]:
+        """Convertit un snapshot en mapping titre -> séances filtrées pour le planner."""
+        result: Dict[str, List[Seance]] = {}
+
+        for screening in snapshot.screenings:
+            room = screening.room or "inconnue"
+            seance = Seance(
+                date=screening.date,
+                heure_debut=screening.heure_debut,
+                heure_fin=screening.heure_fin,
+                version=screening.version,
+                salle=room.split(" ", 1)[1] if " " in room else room,
+                pub_min=self._compute_pub_min(
+                    screening, snapshot.films.get(screening.film_id)),
+            )
+
+            seances = result.setdefault(screening.title, [])
+            if seance not in seances:
+                seances.append(seance)
+
         # Filtrer les films sans séances, supprimer les séances sans salle,
         # et conserver uniquement la VO lorsqu'un film propose VO + VF.
-        result = {
+        return {
             titre: filtered_seances
             for titre, seances in result.items()
             if (filtered_seances := self._filter_screenings(seances))
         }
 
-        return result
+    def scrape_url(self, url: str) -> Dict[str, List[Seance]]:
+        """Scrape l'URL donnée et retourne un mapping titre -> séances."""
+        return self.to_seances(self.scrape_cinema(url))

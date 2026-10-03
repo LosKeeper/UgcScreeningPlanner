@@ -148,6 +148,32 @@
   .chips label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
 
+  textarea.sql {
+    width: 100%;
+    min-height: 130px;
+    resize: vertical;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  details.schema { margin: 10px 0 0; font-size: 13px; }
+  details.schema summary { cursor: pointer; color: var(--muted); }
+  .schema-list { margin-top: 8px; display: grid; gap: 6px; }
+  .schema-list button { padding: 0; border: 0; background: none; color: var(--accent); font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .schema-list .cols { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-word; }
+  .sql-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 14px 0 8px; min-height: 30px; }
+  .sql-bar .spacer { flex: 1; }
+  .sql-result { max-height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .sql-result:empty { display: none; }
+  .sql-result th { position: sticky; top: 0; background: var(--surface); }
+  .sql-result td { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .sql-result td.null { color: var(--muted); font-style: italic; }
+
   .savebar {
     position: fixed;
     left: 0; right: 0; bottom: 0;
@@ -192,6 +218,27 @@
       <a class="button" id="ics-link" href="api/result/ics" hidden>Télécharger l'ICS</a>
     </div>
     <div id="result"></div>
+  </section>
+
+  <section>
+    <div class="head">
+      <h2>Statistiques (SQL)</h2>
+      <span class="spacer"></span>
+      <button id="sql-run" class="primary">Exécuter</button>
+    </div>
+    <p class="hint">Requêtes en lecture seule sur l'historique des séances (1000 lignes au maximum, Ctrl+Entrée pour exécuter).</p>
+    <div class="examples" id="sql-examples"></div>
+    <textarea id="sql-query" class="sql" spellcheck="false" aria-label="Requête SQL"></textarea>
+    <details class="schema" id="sql-schema">
+      <summary>Tables et vues</summary>
+      <div class="schema-list" id="sql-schema-list"></div>
+    </details>
+    <div class="sql-bar">
+      <span class="muted" id="sql-info" aria-live="polite"></span>
+      <span class="spacer"></span>
+      <button id="sql-csv" class="small" hidden>Exporter CSV</button>
+    </div>
+    <div class="table-wrap sql-result" id="sql-result"></div>
   </section>
 
   <section>
@@ -372,6 +419,128 @@ async function loadResult() {
 
   container.replaceChildren(...parts);
 }
+
+/* ---------- Statistiques (SQL) ---------- */
+
+const SQL_STORAGE_KEY = "ugc.sql.query";
+const SQL_EXAMPLES = [
+  ["Pub moyenne par film", `SELECT title, duration_min, COUNT(*) AS seances,
+       ROUND(AVG(ad_min), 1) AS pub_moyenne, MIN(ad_min) AS pub_min, MAX(ad_min) AS pub_max
+FROM v_screening_ads
+WHERE ad_min IS NOT NULL
+GROUP BY film_id
+ORDER BY pub_moyenne DESC;`],
+  ["Films par salle", `SELECT room_name, title, screenings_count, first_date, last_date, avg_ad_min
+FROM v_room_films
+ORDER BY CAST(substr(room_name, instr(room_name, ' ') + 1) AS INTEGER), screenings_count DESC;`],
+  ["Séances par jour", `SELECT screening_date, COUNT(*) AS seances, COUNT(DISTINCT film_id) AS films
+FROM screenings
+GROUP BY screening_date
+ORDER BY screening_date DESC;`],
+  ["Part des séances (semaine)", `SELECT week_start, title, screenings_count, week_total, share_pct
+FROM v_film_share
+WHERE week_start = (SELECT MAX(week_start) FROM v_film_share)
+ORDER BY share_pct DESC;`],
+  ["Part de VO", `SELECT * FROM v_vo_share ORDER BY vo_pct DESC, screenings_count DESC;`],
+  ["Période à l'affiche", `SELECT * FROM v_film_on_screen ORDER BY first_screening_date DESC;`],
+  ["Exécutions", `SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 20;`],
+];
+
+let sqlResult = null;
+
+function storage(action, value) {
+  try {
+    if (action === "get") return localStorage.getItem(SQL_STORAGE_KEY);
+    localStorage.setItem(SQL_STORAGE_KEY, value);
+  } catch (error) {
+    return null;
+  }
+}
+
+function setSqlQuery(query) {
+  $("sql-query").value = query;
+  storage("set", query);
+  $("sql-query").focus();
+}
+
+function renderSqlResult(result) {
+  if (!result.columns.length) {
+    $("sql-result").replaceChildren();
+    return;
+  }
+  $("sql-result").replaceChildren(h("table", {},
+    h("thead", {}, h("tr", {}, ...result.columns.map((column) => h("th", {}, column)))),
+    h("tbody", {}, ...result.rows.map((row) => h("tr", {}, ...row.map((value) =>
+      value === null ? h("td", { class: "null" }, "NULL") : h("td", {}, String(value)))))),
+  ));
+}
+
+async function runSql() {
+  const query = $("sql-query").value.trim();
+  if (!query) return;
+  storage("set", query);
+  $("sql-run").disabled = true;
+  $("sql-info").className = "muted";
+  $("sql-info").textContent = "Exécution…";
+  try {
+    sqlResult = await api("api/sql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+    renderSqlResult(sqlResult);
+    const count = `${sqlResult.row_count} ligne${sqlResult.row_count > 1 ? "s" : ""}`;
+    $("sql-info").textContent = `${count} en ${sqlResult.elapsed_ms} ms${sqlResult.truncated ? " (résultat tronqué à 1000 lignes)" : ""}`;
+    $("sql-csv").hidden = !sqlResult.columns.length;
+  } catch (error) {
+    sqlResult = null;
+    $("sql-result").replaceChildren();
+    $("sql-csv").hidden = true;
+    $("sql-info").className = "message err";
+    $("sql-info").textContent = error.message;
+  } finally {
+    $("sql-run").disabled = false;
+  }
+}
+
+function csvCell(value) {
+  if (value === null) return "";
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+$("sql-csv").addEventListener("click", () => {
+  if (!sqlResult) return;
+  const lines = [sqlResult.columns, ...sqlResult.rows].map((row) => row.map(csvCell).join(","));
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const link = h("a", { href: URL.createObjectURL(blob), download: "ugc_stats.csv" });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+});
+
+async function loadSqlSchema() {
+  const list = $("sql-schema-list");
+  try {
+    const objects = await api("api/sql/schema");
+    list.replaceChildren(...objects.map((object) => h("div", {},
+      h("button", { title: "Insérer une requête sur cet objet", onclick: () => setSqlQuery(`SELECT * FROM ${object.name} LIMIT 100;`) }, object.name),
+      h("span", { class: "muted" }, object.type === "view" ? " (vue) " : " "),
+      h("div", { class: "cols" }, object.columns.map((column) => column.name).join(", ")),
+    )));
+  } catch (error) {
+    list.replaceChildren(h("p", { class: "muted" }, error.message));
+  }
+}
+
+$("sql-examples").replaceChildren(...SQL_EXAMPLES.map(([label, query]) =>
+  h("button", { class: "small", onclick: () => setSqlQuery(query) }, label)));
+$("sql-query").value = storage("get") || SQL_EXAMPLES[0][1];
+$("sql-query").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    runSql();
+  }
+});
+$("sql-run").addEventListener("click", runSql);
+$("sql-schema").addEventListener("toggle", () => {
+  if ($("sql-schema").open) loadSqlSchema();
+});
 
 /* ---------- Planning ---------- */
 
